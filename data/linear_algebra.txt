@@ -1,0 +1,21 @@
+A vector space is a set of objects called vectors that can be added together and multiplied by scalars. The operations in a vector space must satisfy axioms such as associativity, commutativity of addition, and the existence of a zero vector. Familiar examples of a vector space include the plane R2 and three dimensional space R3.
+
+A linear combination of vectors is the sum of those vectors after each has been multiplied by some scalar. Every linear combination of vectors drawn from a vector space stays inside that vector space. The span of a set of vectors is the collection of every linear combination that can be formed from them. If the span of a set of vectors is the entire vector space, we say those vectors spread across the whole space.
+
+A set of vectors is linearly independent when no vector in the set is a linear combination of the others. Linear independence fails whenever one vector is redundant, because that vector adds nothing new to the span. Checking linear independence amounts to asking whether the only linear combination equal to the zero vector is the trivial one.
+
+A basis of a vector space is a set of vectors that is linearly independent and whose span is the entire space. Every vector space has a basis, and every vector in the space is written as exactly one linear combination of the basis vectors. The dimension of a vector space is the number of vectors in any basis for it. Because every basis of a given vector space has the same size, dimension is well defined.
+
+A matrix is a rectangular array of numbers that encodes a linear transformation between vector spaces. A linear transformation preserves addition and scalar multiplication, so it sends a linear combination to the corresponding linear combination of images. Applying a matrix to a vector produces another vector, and composing two linear transformations corresponds to multiplying the two matrices.
+
+The column space of a matrix is the span of its columns. The rank of a matrix is the dimension of its column space, so rank counts how many columns are genuinely linearly independent. The null space of a matrix is the set of vectors the matrix sends to the zero vector. The rank nullity theorem states that the rank plus the dimension of the null space equals the number of columns.
+
+The determinant of a square matrix is a single number that measures how the linear transformation scales volume. A matrix is invertible exactly when its determinant is nonzero, which happens exactly when its columns are linearly independent and its rank is full. A determinant of zero means the linear transformation collapses the space into a lower dimension.
+
+An eigenvector of a square matrix is a nonzero vector whose direction is unchanged when the matrix is applied to it. The eigenvalue attached to an eigenvector is the scalar by which that eigenvector is stretched. Finding an eigenvalue means finding a scalar for which the matrix minus that scalar times the identity has a nontrivial null space.
+
+The characteristic polynomial of a matrix is the determinant of the matrix minus a variable times the identity. The roots of the characteristic polynomial are exactly the eigenvalue values of the matrix. Because the characteristic polynomial relies on the determinant, eigenvalue computation depends on determinant theory.
+
+Diagonalization writes a matrix as a product involving a diagonal matrix of its eigenvalue entries. A matrix is diagonalizable when its eigenvector set contains a basis of the whole vector space. Diagonalization makes repeated multiplication easy, because powers of a diagonal matrix are computed entrywise. When a matrix has fewer independent eigenvector directions than its dimension, diagonalization is impossible.
+
+An inner product assigns a scalar to a pair of vectors and generalises the familiar dot product. Two vectors are orthogonal when their inner product is zero. An orthogonal basis is a basis whose vectors are pairwise orthogonal, which makes computing coordinates much simpler. The projection of a vector onto a subspace is the closest point in that subspace, and it is computed using the inner product.
