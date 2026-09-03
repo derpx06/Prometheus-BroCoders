@@ -5,11 +5,15 @@ answer. No LLM runs in the answer path, so those two routes are fast.
 """
 from __future__ import annotations
 
+import io
 import random
+import re
 import uuid
+import zipfile
 from dataclasses import dataclass, field
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from .generate import Question, generate_bank, ollama
@@ -18,6 +22,14 @@ from .ingest import Concept, build_dag, extract_concepts
 from .learner import Mastery, record, select_question
 
 app = FastAPI(title="Lattice", version="0.1.0")
+
+# The web client is served from its own dev origin; the API holds no credentials.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @dataclass
@@ -77,6 +89,50 @@ def _state(s: Session) -> dict:
 @app.get("/api/health")
 def health() -> dict:
     return {"ok": True, "sessions": len(SESSIONS)}
+
+
+MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+_XML_TAG = re.compile(r"<[^>]+>")
+
+
+def _docx_text(raw: bytes) -> str:
+    """Pull the paragraph text out of a .docx without adding a dependency."""
+    with zipfile.ZipFile(io.BytesIO(raw)) as z:
+        xml = z.read("word/document.xml").decode("utf-8", "ignore")
+    xml = re.sub(r"</w:p>", "\n", xml)
+    return _XML_TAG.sub("", xml)
+
+
+@app.post("/api/extract")
+async def extract(file: UploadFile = File(...)) -> dict:
+    """Uploaded file -> plain text, so the client can hand it straight to /api/sessions."""
+    raw = await file.read()
+    if len(raw) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="file is larger than 20 MB")
+
+    name = (file.filename or "material").lower()
+    try:
+        if name.endswith(".pdf"):
+            from pypdf import PdfReader
+
+            reader = PdfReader(io.BytesIO(raw))
+            text = "\n".join((p.extract_text() or "") for p in reader.pages)
+        elif name.endswith(".docx"):
+            text = _docx_text(raw)
+        else:
+            text = raw.decode("utf-8", "ignore")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=422, detail="could not read that file")
+
+    text = re.sub(r"[ \t]+", " ", text).strip()
+    if len(text) < 200:
+        raise HTTPException(
+            status_code=422,
+            detail="not enough readable text in that file — a scanned PDF needs OCR first",
+        )
+    return {"text": text, "chars": len(text), "filename": file.filename or "material"}
 
 
 @app.post("/api/sessions")
