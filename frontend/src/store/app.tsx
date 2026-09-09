@@ -10,7 +10,9 @@ import {
 } from 'react'
 import type { ActivityEntry, Pack } from '../lib/types'
 import { demoActivity, demoPacks } from '../data/packs'
-import { engineAvailable } from '../lib/api'
+import { api, engineAvailable } from '../lib/api'
+import { packFromSource } from '../lib/pack'
+import { useAuth } from './auth'
 
 export type EngineStatus = 'checking' | 'online' | 'offline'
 
@@ -23,6 +25,8 @@ export interface Toast {
 
 interface AppValue {
   packs: Pack[]
+  /** True while the signed-in user's own material is still being fetched. */
+  loadingPacks: boolean
   activity: ActivityEntry[]
   engine: EngineStatus
   toasts: Toast[]
@@ -33,6 +37,8 @@ interface AppValue {
   logActivity: (entry: Omit<ActivityEntry, 'id' | 'at'> & { at?: number }) => void
   /** Re-probes the engine — it may have been started after the page loaded. */
   refreshEngine: () => Promise<boolean>
+  /** Re-reads the signed-in user's sources from the server. */
+  reloadPacks: () => Promise<void>
   toast: (t: Omit<Toast, 'id'>) => void
   dismissToast: (id: string) => void
 }
@@ -79,6 +85,7 @@ function load(): Persisted {
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
+  const { status, user } = useAuth()
   const initial = useRef<Persisted>()
   if (!initial.current) initial.current = load()
 
@@ -86,6 +93,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [activity, setActivity] = useState<ActivityEntry[]>(initial.current.activity)
   const [engine, setEngine] = useState<EngineStatus>('checking')
   const [toasts, setToasts] = useState<Toast[]>([])
+  const [loadingPacks, setLoadingPacks] = useState(false)
 
   useEffect(() => {
     let alive = true
@@ -95,13 +103,55 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
+  /**
+   * A signed-in user's material comes from the server, not from this browser.
+   *
+   * Each source is fetched individually because the list endpoint deliberately omits the
+   * analysis — concepts and evidence are large, and the list only needs titles.
+   */
+  const loadFromServer = useCallback(async () => {
+    setLoadingPacks(true)
+    try {
+      const { sources } = await api.sources()
+      const full = await Promise.all(
+        sources.map((s) => api.source(s.id).catch(() => null)),
+      )
+      setPacks(full.filter((s): s is NonNullable<typeof s> => Boolean(s)).map(packFromSource))
+    } catch (e) {
+      console.warn('Could not load your material', e)
+    } finally {
+      setLoadingPacks(false)
+    }
+  }, [])
+
   useEffect(() => {
+    if (status === 'authenticated') {
+      void loadFromServer()
+      // The bundled activity feed is demo data. Showing a real account "Quiz — 8 of 10
+      // correct, 6 days ago" for a document they have never opened is exactly the kind of
+      // convincing fiction this product must not print, so it is cleared on sign-in and
+      // refilled only by things the person actually does.
+      setActivity([])
+    } else if (status === 'anonymous') {
+      // Back to the bundled demo material, so signing out does not leave another account's
+      // titles on screen.
+      const demo = load()
+      setPacks(demo.packs)
+      setActivity(demo.activity)
+    }
+  }, [status, user?.id, loadFromServer])
+
+  useEffect(() => {
+    // Only the anonymous demo persists to this browser. A signed-in user's material lives in
+    // the database, and mirroring it into localStorage would leak it to the next person to
+    // use the machine.
+    if (status === 'authenticated') return
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ packs, activity }))
     } catch {
       /* storage is a convenience here, never a requirement */
     }
-  }, [packs, activity])
+  }, [packs, activity, status])
 
   const getPack = useCallback((id: string | undefined) => packs.find((p) => p.id === id), [packs])
 
@@ -159,6 +209,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const value = useMemo<AppValue>(
     () => ({
       packs,
+      loadingPacks,
       activity,
       engine,
       toasts,
@@ -168,11 +219,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setConceptMastery,
       logActivity,
       refreshEngine,
+      reloadPacks: loadFromServer,
       toast,
       dismissToast,
     }),
     [
       packs,
+      loadingPacks,
       activity,
       engine,
       toasts,
@@ -182,6 +235,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setConceptMastery,
       logActivity,
       refreshEngine,
+      loadFromServer,
       toast,
       dismissToast,
     ],

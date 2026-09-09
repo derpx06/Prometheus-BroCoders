@@ -4,6 +4,8 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { ArrowUp, ListChecks, Quote, Sparkles } from 'lucide-react'
 import type { Pack } from '../../lib/types'
 import { answer, STARTER_PROMPTS, type TutorReply } from '../../lib/tutor'
+import { api } from '../../lib/api'
+import { useAuth } from '../../store/auth'
 import { SUBJECTS } from '../../data/subjects'
 import { LogoMark } from './Logo'
 import { cn } from '../../lib/cn'
@@ -43,11 +45,26 @@ export function AIChat({
   ])
   const [draft, setDraft] = useState('')
   const [thinking, setThinking] = useState(false)
+  const { status } = useAuth()
   const scroller = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: 'smooth' })
   }, [messages, thinking])
+
+  useEffect(() => {
+    if (!pack.sourceId || status !== 'authenticated') return
+    let alive = true
+    api.chatHistory(pack.sourceId)
+      .then(({ messages: history }) => {
+        if (!alive || !history.length) return
+        setMessages(history.map((m) => m.role === 'user'
+          ? { id: m.id, role: 'user', text: m.content }
+          : { id: m.id, role: 'assistant', reply: { paragraphs: [m.content], citations: m.citations, suggestions: [] } }))
+      })
+      .catch((e) => console.warn('Could not load study chat', e))
+    return () => { alive = false }
+  }, [pack.sourceId, status])
 
   const send = useCallback(
     (text: string) => {
@@ -56,19 +73,27 @@ export function AIChat({
     setDraft('')
     setMessages((m) => [...m, { id: `u${Date.now()}`, role: 'user', text: q }])
     setThinking(true)
-    // A short beat so the answer reads as considered rather than pre-baked.
-    setTimeout(
-      () => {
+    if (pack.sourceId && status === 'authenticated') {
+      void api.chat(pack.sourceId, q)
+        .then(({ message }) => {
+          setMessages((m) => [...m, { id: message.id, role: 'assistant', reply: { paragraphs: [message.content], citations: message.citations, suggestions: [] } }])
+        })
+        .catch((e) => {
+          setMessages((m) => [...m, { id: `e${Date.now()}`, role: 'assistant', reply: { paragraphs: [e instanceof Error ? e.message : 'The study assistant is unavailable. Please try again.'], citations: [], suggestions: [] } }])
+        })
+        .finally(() => setThinking(false))
+      return
+    }
+    // Anonymous demo packs retain the local citation-based tutor.
+    setTimeout(() => {
         setMessages((m) => [
           ...m,
           { id: `a${Date.now()}`, role: 'assistant', reply: answer(pack, q) },
         ])
         setThinking(false)
-      },
-      520 + Math.random() * 320,
-    )
+      }, 520 + Math.random() * 320)
     },
-    [pack],
+    [pack, status],
   )
 
   // A concept action from the notes arrives as a seed; ask it once.

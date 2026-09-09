@@ -9,11 +9,12 @@ import {
 } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { Pack, SourceKind } from '../lib/types'
-import { api } from '../lib/api'
-import { buildPackFromSession } from '../lib/pack'
+import { api, demo } from '../lib/api'
+import { buildPackFromSession, packFromSource } from '../lib/pack'
 import { SAMPLE_MATERIAL } from '../data/packs'
 import { biologyPack } from '../data/biology'
 import { useApp } from './app'
+import { useAuth } from './auth'
 import { UploadModal } from '../components/app/UploadModal'
 import { STAGES } from '../components/app/ProcessingView'
 
@@ -31,6 +32,7 @@ interface UploadValue {
   closeUpload: () => void
   submitFile: (file: File) => void
   submitText: (text: string, label: string) => void
+  submitLink: (url: string, label: string) => void
   submitSample: () => void
   reset: () => void
 }
@@ -52,6 +54,8 @@ function kindFromName(name: string): SourceKind {
 export function UploadProvider({ children }: { children: ReactNode }) {
   const navigate = useNavigate()
   const { addPack, logActivity, toast, engine, refreshEngine } = useApp()
+  const { status } = useAuth()
+  const signedIn = status === 'authenticated'
 
   const [open, setOpen] = useState(false)
   const [initialTab, setInitialTab] = useState<'file' | 'text' | 'link'>('file')
@@ -135,10 +139,8 @@ export function UploadProvider({ children }: { children: ReactNode }) {
     setError(message)
   }, [])
 
-  const ingest = useCallback(
-    async (text: string, label: string, kind: SourceKind): Promise<Pack> => {
-      const state = await api.createSession(text)
-      const pack = buildPackFromSession(state, { sourceLabel: label, sourceKind: kind, text })
+  const land = useCallback(
+    (pack: Pack, label: string) => {
       addPack(pack)
       logActivity({
         kind: 'upload',
@@ -149,6 +151,28 @@ export function UploadProvider({ children }: { children: ReactNode }) {
       return pack
     },
     [addPack, logActivity],
+  )
+
+  /**
+   * Text -> a study pack.
+   *
+   * Signed in, this creates a persisted source: it survives a reload, can be generated from
+   * repeatedly, and carries a per-user student model. Anonymous, it falls through to the
+   * original ephemeral session so the landing-page demo still works with no account.
+   */
+  const ingest = useCallback(
+    async (text: string, label: string, kind: SourceKind): Promise<Pack> => {
+      if (signedIn) {
+        const source = await api.pasteSource(text, label)
+        return land(packFromSource(source), label)
+      }
+      const state = await demo.createSession(text)
+      return land(
+        buildPackFromSession(state, { sourceLabel: label, sourceKind: kind, text }),
+        label,
+      )
+    },
+    [signedIn, land],
   )
 
   const OFFLINE_MSG =
@@ -166,14 +190,17 @@ export function UploadProvider({ children }: { children: ReactNode }) {
       try {
         await run(file.name, async () => {
           await requireEngine()
-          const { text } = await api.extract(file)
+          // Signed in, the file goes straight to the source endpoint: extraction and analysis
+          // happen in one round trip rather than extract-then-ingest.
+          if (signedIn) return land(packFromSource(await api.uploadSource(file)), file.name)
+          const { text } = await demo.extract(file)
           return ingest(text, file.name, kind)
         })
       } catch (e) {
         fail(e instanceof Error ? e.message : 'We could not read that file. Try uploading it again.')
       }
     },
-    [requireEngine, ingest, run, fail],
+    [requireEngine, ingest, run, fail, signedIn, land],
   )
 
   const submitText = useCallback(
@@ -192,6 +219,29 @@ export function UploadProvider({ children }: { children: ReactNode }) {
       }
     },
     [requireEngine, ingest, run, fail],
+  )
+
+  /**
+   * A YouTube URL. The transcript is fetched server-side from the video's own caption track,
+   * which needs an account because the result is a persisted source.
+   */
+  const submitLink = useCallback(
+    async (url: string, label: string) => {
+      try {
+        await run(label || url, async () => {
+          await requireEngine()
+          if (!signedIn)
+            throw new Error(
+              'Fetching a video transcript needs an account, because the result is saved as a source you can reuse. Sign in, or paste the transcript text instead.',
+            )
+          const source = await api.youtubeSource(url, label)
+          return land(packFromSource(source), source.title)
+        })
+      } catch (e) {
+        fail(e instanceof Error ? e.message : 'We could not get a transcript for that link.')
+      }
+    },
+    [requireEngine, run, fail, signedIn, land],
   )
 
   /** The sample runs through the real engine when it is up, and falls back to the
@@ -227,6 +277,7 @@ export function UploadProvider({ children }: { children: ReactNode }) {
       closeUpload,
       submitFile,
       submitText,
+      submitLink,
       submitSample,
       reset,
     }),
@@ -242,6 +293,7 @@ export function UploadProvider({ children }: { children: ReactNode }) {
       closeUpload,
       submitFile,
       submitText,
+      submitLink,
       submitSample,
       reset,
     ],

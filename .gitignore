@@ -8,3 +8,8 @@ dist/
 *.tsbuildinfo
 .claude/settings.local.json
 frontend/.claude-launch-note
+
+# The local database. Sources hold uploaded material, so this must never be committed.
+data/*.db
+data/*.db-shm
+data/*.db-wal

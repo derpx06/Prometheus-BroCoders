@@ -2,10 +2,28 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "lattice-api",
+      "runtimeExecutable": ".venv/bin/uvicorn",
+      "runtimeArgs": [
+        "backend.main:app",
+        "--reload",
+        "--port",
+        "8000"
+      ],
+      "port": 8000,
+      "autoPort": false
+    },
+    {
       "name": "lattice-web",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--prefix", "frontend"],
-      "port": 5173
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--prefix",
+        "frontend"
+      ],
+      "port": 5173,
+      "autoPort": true
     }
   ]
 }

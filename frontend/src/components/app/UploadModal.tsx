@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
-import { AlertCircle, ClipboardType, FileText, Link2, Sparkles } from 'lucide-react'
+import { AlertCircle, ClipboardType, FileText, Sparkles, Youtube } from 'lucide-react'
 import { Modal } from '../ui/Modal'
 import { Button } from '../ui/Button'
 import { Badge } from '../ui/primitives'
 import { SupportedFormats, UploadZone } from './UploadZone'
 import { ProcessingComplete, ProcessingView } from './ProcessingView'
 import { useUpload } from '../../store/upload'
+import { useAuth } from '../../store/auth'
 import { cn } from '../../lib/cn'
 
 type Tab = 'file' | 'text' | 'link'
@@ -13,7 +14,7 @@ type Tab = 'file' | 'text' | 'link'
 const TABS: { id: Tab; label: string; icon: typeof FileText }[] = [
   { id: 'file', label: 'Upload', icon: FileText },
   { id: 'text', label: 'Paste text', icon: ClipboardType },
-  { id: 'link', label: 'Link', icon: Link2 },
+  { id: 'link', label: 'YouTube', icon: Youtube },
 ]
 
 export function UploadModal() {
@@ -28,13 +29,16 @@ export function UploadModal() {
     closeUpload,
     submitFile,
     submitText,
+    submitLink,
     submitSample,
     reset,
   } = useUpload()
+  const { status } = useAuth()
 
   const [tab, setTab] = useState<Tab>(initialTab)
   const [text, setText] = useState('')
   const [title, setTitle] = useState('')
+  const [url, setUrl] = useState('')
 
   useEffect(() => {
     if (open) setTab(initialTab)
@@ -149,21 +153,38 @@ export function UploadModal() {
           {tab === 'link' && (
             <div>
               <label className="mb-1.5 block text-[12.5px] font-medium text-ink-2">
-                Lecture or article URL
+                YouTube link
               </label>
               <input
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
                 placeholder="https://www.youtube.com/watch?v=…"
                 className="interactive h-10 w-full rounded-[10px] border border-line bg-surface px-3 text-[14px] hover:border-line-strong focus:border-accent focus:outline-none focus:ring-3 focus:ring-accent/12"
               />
-              <div className="mt-3 flex gap-2.5 rounded-[12px] border border-line bg-raised p-3.5">
-                <Badge tone="warn" className="mt-px h-fit shrink-0">
-                  Not wired up
-                </Badge>
-                <p className="text-[13px] leading-relaxed text-ink-2">
-                  Transcript fetching needs a service this build does not ship. Copy the
-                  transcript and drop it into <b className="font-medium text-ink">Paste text</b> — it
-                  runs through exactly the same pipeline.
-                </p>
+              <p className="mt-2 text-[12.5px] leading-relaxed text-ink-3">
+                We read the video's own caption track, so a lecture becomes a study pack the
+                same way a PDF does. Videos with captions turned off have no transcript to
+                read — paste the text instead.
+              </p>
+              {status !== 'authenticated' && (
+                <div className="mt-3 flex gap-2.5 rounded-[12px] border border-line bg-raised p-3.5">
+                  <Badge tone="warn" className="mt-px h-fit shrink-0">
+                    Needs an account
+                  </Badge>
+                  <p className="text-[13px] leading-relaxed text-ink-2">
+                    A fetched transcript is saved as a source you can reuse, so this one needs
+                    you signed in.
+                  </p>
+                </div>
+              )}
+              <div className="mt-3 flex justify-end">
+                <Button
+                  variant="primary"
+                  disabled={url.trim().length < 8 || status !== 'authenticated'}
+                  onClick={() => submitLink(url.trim(), title.trim())}
+                >
+                  Build my study pack
+                </Button>
               </div>
             </div>
           )}

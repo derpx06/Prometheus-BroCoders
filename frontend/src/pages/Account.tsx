@@ -6,6 +6,7 @@ import { Button } from '../components/ui/Button'
 import { Avatar, Badge, Card, ProgressBar } from '../components/ui/primitives'
 import { useApp } from '../store/app'
 import { USER } from '../data/user'
+import { useAuth } from '../store/auth'
 import { SUBJECTS } from '../data/subjects'
 import { packProgress } from '../lib/pack'
 import { duration, pct } from '../lib/format'
@@ -87,8 +88,19 @@ export function Settings() {
   )
 }
 
+const ROLE_LABEL = {
+  student: 'Student',
+  teacher: 'Teacher',
+  admin: 'Administrator',
+} as const
+
 export function Profile() {
   const { packs, activity } = useApp()
+  const { user, school } = useAuth()
+  // The demo persona only stands in when nobody is signed in.
+  const name = user?.name ?? USER.name
+  const email = user?.email ?? USER.email
+  const plan = school?.name ?? (user ? ROLE_LABEL[user.role] : USER.plan)
   const minutes = packs.reduce((n, p) => n + p.minutes, 0)
   const concepts = packs.flatMap((p) => p.concepts)
   const mastered = concepts.filter((c) => c.mastery >= 0.8).length
@@ -103,13 +115,13 @@ export function Profile() {
   return (
     <Page className="max-w-[720px]">
       <div className="mb-8 flex items-center gap-4">
-        <Avatar name={USER.name} size={56} />
+        <Avatar name={name} size={56} />
         <div className="min-w-0">
-          <h1 className="text-[22px] font-semibold text-ink">{USER.name}</h1>
-          <p className="mt-0.5 text-[13.5px] text-ink-2">{USER.email}</p>
+          <h1 className="text-[22px] font-semibold text-ink">{name}</h1>
+          <p className="mt-0.5 text-[13.5px] text-ink-2">{email}</p>
         </div>
         <Badge tone="accent" className="ml-auto shrink-0">
-          {USER.plan}
+          {plan}
         </Badge>
       </div>
 

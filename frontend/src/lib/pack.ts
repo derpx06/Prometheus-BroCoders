@@ -1,5 +1,5 @@
-import type { Concept, Flashcard, NoteSection, Pack, SourceKind, Topic } from './types'
-import type { SessionState } from './api'
+import type { Concept, Flashcard, NoteSection, Pack, Source, SourceKind, Topic } from './types'
+import type { DemoSessionState } from './api'
 import { inferSubject, SUBJECTS } from '../data/subjects'
 import { titleCase } from './format'
 
@@ -11,7 +11,7 @@ export function titleFromSource(label: string): string {
 }
 
 /** Dependency depth per concept. The engine guarantees a DAG, so this settles fast. */
-function layerOf(state: { concepts: Concept[]; edges: SessionState['edges'] }): Map<number, number> {
+function layerOf(state: { concepts: Concept[]; edges: DemoSessionState['edges'] }): Map<number, number> {
   const depth = new Map<number, number>(state.concepts.map((c) => [c.id, 0]))
   for (let pass = 0; pass < state.concepts.length; pass++) {
     let moved = false
@@ -33,7 +33,7 @@ function layerOf(state: { concepts: Concept[]; edges: SessionState['edges'] }): 
  * Topics are dependency layers: everything in step 2 depends on something in step 1, so
  * working top to bottom means never meeting a concept before its prerequisites.
  */
-export function buildTopics(concepts: Concept[], edges: SessionState['edges']): Topic[] {
+export function buildTopics(concepts: Concept[], edges: DemoSessionState['edges']): Topic[] {
   if (!concepts.length) return []
   const depth = layerOf({ concepts, edges })
   const groups = new Map<number, Concept[]>()
@@ -65,7 +65,7 @@ export function buildTopics(concepts: Concept[], edges: SessionState['edges']): 
  * one at a time from the adaptive loop, which is the whole point of the engine.
  */
 export function buildPackFromSession(
-  state: SessionState,
+  state: DemoSessionState,
   opts: { sourceLabel: string; sourceKind: SourceKind; text: string },
 ): Pack {
   const subject = inferSubject(opts.text)
@@ -144,7 +144,109 @@ export function buildPackFromSession(
   }
 }
 
-function prerequisiteNames(state: SessionState, id: number): string[] {
+/**
+ * A persisted source, in the shape every existing screen already reads.
+ *
+ * This is the migration bridge. `StudyPack`, `NotesReader`, `Quiz`, `Flashcards`, `Library`
+ * and `Progress` were all written against `Pack`; rather than rewrite six screens to talk to
+ * the new API, the new API's `Source` is adapted into `Pack` here. The screens do not change,
+ * and what they render stops being `localStorage` and starts being the database.
+ */
+export function packFromSource(source: Source): Pack {
+  const concepts = source.concepts ?? []
+  const edges = source.edges ?? []
+  const kind: SourceKind =
+    source.kind === 'youtube' ? 'youtube' : source.kind === 'file' ? 'pdf' : 'notes'
+  const subject = source.subject ?? 'general'
+
+  const ranked = [...concepts].sort((a, b) => b.evidence.length - a.evidence.length)
+  const headline = ranked.slice(0, 6).map((c) => c.name)
+
+  const notes: NoteSection[] = [
+    {
+      id: 'overview',
+      title: 'Overview',
+      blocks: [
+        {
+          type: 'paragraph',
+          text: `Lattice read ${source.title} and pulled out ${concepts.length} distinct concepts, then worked out which ones depend on which. The sections below follow that order — earlier concepts first, so nothing arrives before its prerequisites.`,
+        },
+        ...(headline.length
+          ? [
+              {
+                type: 'callout' as const,
+                tone: 'key' as const,
+                title: 'Where to start',
+                text: `The material leans hardest on ${headline.slice(0, 3).map(titleCase).join(', ')}. Those carry the most supporting text, so they are the safest place to begin.`,
+              },
+              { type: 'bullets' as const, items: headline.map(titleCase) },
+            ]
+          : []),
+      ],
+    },
+    ...concepts
+      .filter((c) => c.evidence.length)
+      .map<NoteSection>((c) => {
+        const builds = edges
+          .filter((e) => e.target === c.id)
+          .sort((a, b) => b.weight - a.weight)
+          .slice(0, 2)
+          .map((e) => concepts.find((x) => x.id === e.source)?.name)
+          .filter((n): n is string => Boolean(n))
+        return {
+          id: `c-${c.id}`,
+          title: titleCase(c.name),
+          blocks: [
+            ...c.evidence.map((sentence) => ({ type: 'paragraph' as const, text: sentence })),
+            ...(builds.length
+              ? [
+                  {
+                    type: 'callout' as const,
+                    tone: 'note' as const,
+                    title: 'Builds on',
+                    text: builds.map(titleCase).join(' · '),
+                  },
+                ]
+              : []),
+          ],
+        }
+      }),
+  ]
+
+  const flashcards: Flashcard[] = concepts
+    .filter((c) => c.evidence.length)
+    .map<Flashcard>((c) => ({
+      id: `f-${c.id}`,
+      front: `What is ${c.name}?`,
+      back: c.evidence[0],
+      concept: c.name,
+    }))
+
+  const touched = concepts.some((c) => c.attempts > 0)
+
+  return {
+    id: `src-${source.id}`,
+    title: source.title,
+    subject,
+    folder: SUBJECTS[subject].label,
+    sourceLabel: source.origin ?? source.title,
+    sourceKind: kind,
+    createdAt: source.createdAt * 1000,
+    lastStudied: touched ? Date.now() : null,
+    progress: 0,
+    minutes: 0,
+    summary: `${concepts.length} concepts, ${edges.length} prerequisite links and ${source.questionCount ?? 0} generated questions, all drawn from ${source.title}.`,
+    concepts,
+    edges,
+    topics: source.topics ?? buildTopics(concepts, edges),
+    notes,
+    flashcards,
+    quiz: [],
+    sourceId: source.id,
+  }
+}
+
+function prerequisiteNames(state: DemoSessionState, id: number): string[] {
   return state.edges
     .filter((e) => e.target === id)
     .sort((a, b) => b.weight - a.weight)

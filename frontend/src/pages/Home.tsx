@@ -20,12 +20,16 @@ import { useApp } from '../store/app'
 import { useUpload } from '../store/upload'
 import { greeting } from '../lib/format'
 import { USER } from '../data/user'
+import { useAuth } from '../store/auth'
 import { hasStarted, packProgress, recommend } from '../lib/pack'
 import { DUR, EASE, SPRING } from '../lib/motion'
 import { cn } from '../lib/cn'
 
 export function Home() {
   const { packs } = useApp()
+  const { user } = useAuth()
+  // Falls back to the demo persona only when nobody is signed in.
+  const firstName = user?.name.split(' ')[0] ?? USER.firstName
   const { openUpload, submitFile, submitText, submitSample } = useUpload()
   const [draft, setDraft] = useState('')
   const [focused, setFocused] = useState(false)
@@ -58,7 +62,7 @@ export function Home() {
         className="pt-3 pb-8 sm:pt-8 sm:pb-10"
       >
         <h1 className="text-[27px] leading-tight font-semibold tracking-[-0.026em] text-ink sm:text-[34px]">
-          {greeting()}, {USER.firstName}.
+          {greeting()}, {firstName}.
         </h1>
         <p className="mt-2 text-[15.5px] text-ink-2 sm:text-[17px]">
           What are you learning today?

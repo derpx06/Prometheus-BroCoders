@@ -1,12 +1,14 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
-import { ArrowRight, Flame, Layers, ListChecks, FileText, Upload } from 'lucide-react'
+import { ArrowRight, Layers, ListChecks, FileText, Info, Upload } from 'lucide-react'
 import { Page, PageHeader } from '../components/app/AppLayout'
 import { Button } from '../components/ui/Button'
 import { Reveal } from '../components/ui/Reveal'
 import { BAND, bandFor, GraphLegend, KnowledgeGraph } from '../components/app/KnowledgeGraph'
 import { useApp } from '../store/app'
+import { useAuth } from '../store/auth'
+import { api } from '../lib/api'
 import { studyMinutes } from '../data/packs'
 import { USER } from '../data/user'
 import { SUBJECTS } from '../data/subjects'
@@ -15,7 +17,7 @@ import { duration, pct, relativeTime, titleCase } from '../lib/format'
 import { useCountUp } from '../lib/hooks'
 import { DUR, EASE } from '../lib/motion'
 import { cn } from '../lib/cn'
-import type { ActivityEntry, Concept, Pack } from '../lib/types'
+import type { ActivityEntry, Concept, MyAnalytics, Pack } from '../lib/types'
 
 const ACTIVITY_ICON: Record<ActivityEntry['kind'], typeof ListChecks> = {
   quiz: ListChecks,
@@ -26,7 +28,20 @@ const ACTIVITY_ICON: Record<ActivityEntry['kind'], typeof ListChecks> = {
 
 export function Progress() {
   const { packs, activity } = useApp()
+  const { status } = useAuth()
+  const signedIn = status === 'authenticated'
   const [open, setOpen] = useState<string | null>(null)
+  const [real, setReal] = useState<MyAnalytics | null>(null)
+
+  // A signed-in learner's numbers come from answers they actually gave. The bundled figures
+  // below them are demo data for a visitor with no account, and are labelled as such.
+  useEffect(() => {
+    if (!signedIn) {
+      setReal(null)
+      return
+    }
+    api.myAnalytics().then(setReal).catch(() => setReal(null))
+  }, [signedIn])
 
   const stats = useMemo(() => {
     const all = packs.flatMap((p) => p.concepts)
@@ -54,14 +69,29 @@ export function Progress() {
       {/* Stats — a single quiet row, not four boxes */}
       <Reveal weight="primary">
         <div className="grid grid-cols-2 gap-y-6 border-y border-line py-6 sm:grid-cols-4 sm:divide-x sm:divide-line">
-          <Stat label="Learning streak" value={USER.streak} suffix=" days" icon={<Flame size={13} />} />
-          <Stat label="Study time" value={stats.minutes} format={(n) => duration(Math.round(n))} />
-          <Stat label="Concepts held" value={stats.mastered} suffix={` / ${stats.total}`} />
-          <Stat
-            label="Quiz accuracy"
-            value={stats.accuracy * 100}
-            format={(n) => `${Math.round(n)}%`}
-          />
+          {signedIn ? (
+            <>
+              <Stat label="Questions answered" value={real?.answered ?? 0} />
+              <Stat label="Sessions completed" value={real?.attempts ?? 0} />
+              <Stat label="Concepts held" value={stats.mastered} suffix={` / ${stats.total}`} />
+              <Stat
+                label="Accuracy"
+                value={(real?.accuracy ?? 0) * 100}
+                format={(n) => (real?.accuracy == null ? '—' : `${Math.round(n)}%`)}
+              />
+            </>
+          ) : (
+            <>
+              <Stat label="Study time" value={stats.minutes} format={(n) => duration(Math.round(n))} />
+              <Stat label="Concepts held" value={stats.mastered} suffix={` / ${stats.total}`} />
+              <Stat
+                label="Quiz accuracy"
+                value={stats.accuracy * 100}
+                format={(n) => `${Math.round(n)}%`}
+              />
+              <Stat label="Study packs" value={packs.length} />
+            </>
+          )}
         </div>
       </Reveal>
 
@@ -116,9 +146,13 @@ export function Progress() {
       {/* Rhythm + activity */}
       <section className="mt-12 grid gap-8 lg:grid-cols-[1.2fr_1fr]">
         <div>
+          {signedIn ? (
+            <RecordedHistory analytics={real} />
+          ) : (
+            <>
           <div className="mb-4 flex items-baseline justify-between gap-3">
             <h2 className="text-[15px] font-semibold text-ink">Last two weeks</h2>
-            <span className="text-[12px] text-ink-3">Daily goal {USER.goalMinutes} min</span>
+            <span className="text-[12px] text-ink-3">Demo data</span>
           </div>
           <div className="flex h-24 items-end gap-1.5">
             {studyMinutes.map((m, i) => {
@@ -143,10 +177,19 @@ export function Progress() {
             <span>14 days ago</span>
             <span>Today</span>
           </div>
+            </>
+          )}
         </div>
 
         <div>
           <h2 className="mb-4 text-[15px] font-semibold text-ink">Recent activity</h2>
+          {!activity.length && (
+            <p className="flex items-start gap-2 rounded-[12px] border border-line bg-raised p-3.5 text-[12.5px] leading-relaxed text-ink-2">
+              <Info size={14} className="mt-px shrink-0 text-ink-4" />
+              Nothing this session yet. Reading notes, drilling flashcards and finishing quizzes
+              all show up here as you do them.
+            </p>
+          )}
           <ul className="-mx-2 space-y-0.5">
             {activity.slice(0, 6).map((a) => {
               const Icon = ACTIVITY_ICON[a.kind]
@@ -174,6 +217,68 @@ export function Progress() {
         </div>
       </section>
     </Page>
+  )
+}
+
+/**
+ * Real study history.
+ *
+ * This replaces the bundled two-week bar chart for anyone signed in. Daily study minutes are
+ * not something the platform records yet, and drawing a chart of them would be inventing the
+ * data — so what is shown instead is the thing that *is* recorded: every session, with the
+ * score it earned.
+ */
+function RecordedHistory({ analytics }: { analytics: MyAnalytics | null }) {
+  if (!analytics) {
+    return (
+      <>
+        <h2 className="mb-4 text-[15px] font-semibold text-ink">Session history</h2>
+        <div className="h-24 rounded-[12px] shimmer" />
+      </>
+    )
+  }
+
+  if (!analytics.history.length) {
+    return (
+      <>
+        <h2 className="mb-4 text-[15px] font-semibold text-ink">Session history</h2>
+        <p className="flex items-start gap-2 rounded-[12px] border border-line bg-raised p-3.5 text-[12.5px] leading-relaxed text-ink-2">
+          <Info size={14} className="mt-px shrink-0 text-ink-4" />
+          Nothing recorded yet. Every quiz and assignment you finish shows up here with its
+          score — there is no estimate standing in for it in the meantime.
+        </p>
+      </>
+    )
+  }
+
+  return (
+    <>
+      <h2 className="mb-4 text-[15px] font-semibold text-ink">Session history</h2>
+      <ul className="-mx-2 space-y-0.5">
+        {analytics.history.slice(0, 8).map((h) => {
+          const ratio = h.score != null && h.maxScore ? h.score / h.maxScore : null
+          return (
+            <li
+              key={h.id}
+              className="flex items-center gap-3 rounded-[10px] px-2 py-2"
+            >
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] bg-raised text-ink-3">
+                <ListChecks size={13} />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[13px] font-medium text-ink">{h.title}</span>
+                <span className="block truncate text-[11.5px] text-ink-3">
+                  {relativeTime(h.submittedAt * 1000)}
+                </span>
+              </span>
+              <span className="shrink-0 text-[12px] font-medium tabular-nums text-ink-2">
+                {ratio != null ? pct(ratio) : '—'}
+              </span>
+            </li>
+          )
+        })}
+      </ul>
+    </>
   )
 }
 

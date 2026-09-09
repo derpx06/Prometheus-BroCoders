@@ -3,18 +3,24 @@ import { motion } from 'framer-motion'
 import {
   BarChart3,
   BookOpen,
+  ClipboardList,
   GraduationCap,
   Home,
+  Library,
   PanelLeftClose,
   PanelLeftOpen,
   Settings,
+  Sparkles,
   Target,
+  Users,
 } from 'lucide-react'
 import { cn } from '../../lib/cn'
 import { Logo, LogoMark } from './Logo'
 import { Avatar } from '../ui/primitives'
 import { IconButton } from '../ui/Button'
+import { useAuth } from '../../store/auth'
 import { USER } from '../../data/user'
+import type { Role } from '../../lib/types'
 
 export interface NavItem {
   to: string
@@ -23,13 +29,61 @@ export interface NavItem {
   end?: boolean
 }
 
-export const NAV: NavItem[] = [
+/**
+ * One shell, three surfaces.
+ *
+ * Admin is deliberately a *superset* of teacher rather than a third product: an
+ * administrator is a teacher who can also manage seats, and splitting them would mean
+ * maintaining two dashboards that drift apart.
+ */
+const STUDENT_NAV: NavItem[] = [
   { to: '/app', label: 'Home', icon: Home, end: true },
-  { to: '/app/learn', label: 'Learn', icon: GraduationCap },
+  { to: '/app/classes', label: 'My classes', icon: Users },
+  { to: '/app/assignments', label: 'Assignments', icon: ClipboardList },
+  { to: '/app/practice', label: 'Practice', icon: Target },
+  { to: '/app/library', label: 'Library', icon: BookOpen },
+  { to: '/app/progress', label: 'Progress', icon: BarChart3 },
+]
+
+const TEACHER_NAV: NavItem[] = [
+  { to: '/app', label: 'Home', icon: Home, end: true },
+  { to: '/app/classes', label: 'Classes', icon: Users },
+  { to: '/app/create', label: 'Create', icon: Sparkles },
+  { to: '/app/library', label: 'Library', icon: BookOpen },
+  { to: '/app/bank', label: 'Question bank', icon: Library },
+  { to: '/app/analytics', label: 'Analytics', icon: BarChart3 },
+]
+
+const ADMIN_EXTRA: NavItem[] = [{ to: '/app/teachers', label: 'Teachers', icon: GraduationCap }]
+
+/** The anonymous demo keeps the original shape — there is nobody to have a role yet. */
+const DEMO_NAV: NavItem[] = [
+  { to: '/app', label: 'Home', icon: Home, end: true },
   { to: '/app/library', label: 'Library', icon: BookOpen },
   { to: '/app/practice', label: 'Practice', icon: Target },
   { to: '/app/progress', label: 'Progress', icon: BarChart3 },
 ]
+
+export function navFor(role: Role | null): NavItem[] {
+  if (role === 'admin') return [...TEACHER_NAV, ...ADMIN_EXTRA]
+  if (role === 'teacher') return TEACHER_NAV
+  if (role === 'student') return STUDENT_NAV
+  return DEMO_NAV
+}
+
+/** Every nav destination across every role — used for the top bar's section title. */
+export const NAV: NavItem[] = [
+  ...DEMO_NAV,
+  ...STUDENT_NAV,
+  ...TEACHER_NAV,
+  ...ADMIN_EXTRA,
+].filter((item, i, all) => all.findIndex((x) => x.to === item.to) === i)
+
+const ROLE_LABEL: Record<Role, string> = {
+  student: 'Student',
+  teacher: 'Teacher',
+  admin: 'Administrator',
+}
 
 function Row({
   item,
@@ -84,6 +138,11 @@ export function Sidebar({
   collapsed: boolean
   onToggle: () => void
 }) {
+  const { role, user, school } = useAuth()
+  const items = navFor(role)
+  const name = user?.name ?? USER.name
+  const subtitle = school?.name ?? (role ? ROLE_LABEL[role] : USER.plan)
+
   return (
     <motion.aside
       initial={false}
@@ -96,7 +155,7 @@ export function Sidebar({
       </div>
 
       <nav className={cn('flex flex-1 flex-col gap-0.5', collapsed ? 'items-center px-2.5' : 'px-2.5')}>
-        {NAV.map((item) => (
+        {items.map((item) => (
           <Row key={item.to} item={item} collapsed={collapsed} />
         ))}
       </nav>
@@ -106,7 +165,7 @@ export function Sidebar({
 
         <NavLink
           to="/app/profile"
-          title={collapsed ? USER.name : undefined}
+          title={collapsed ? name : undefined}
           className={({ isActive }) =>
             cn(
               'interactive mt-1 flex h-11 items-center gap-2.5 rounded-[10px]',
@@ -115,11 +174,11 @@ export function Sidebar({
             )
           }
         >
-          <Avatar name={USER.name} size={26} />
+          <Avatar name={name} size={26} />
           {!collapsed && (
             <span className="min-w-0 flex-1 leading-tight">
-              <span className="block truncate text-[13px] font-medium text-ink">{USER.name}</span>
-              <span className="block truncate text-[11.5px] text-ink-3">{USER.plan}</span>
+              <span className="block truncate text-[13px] font-medium text-ink">{name}</span>
+              <span className="block truncate text-[11.5px] text-ink-3">{subtitle}</span>
             </span>
           )}
         </NavLink>

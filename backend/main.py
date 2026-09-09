@@ -1,35 +1,88 @@
 """Lattice HTTP API.
 
-Thin layer over the engine: ingest builds a course, then the loop is next-question /
-answer. No LLM runs in the answer path, so those two routes are fast.
+Two surfaces, on purpose:
+
+* **The platform** — `/api/auth`, `/api/sources`, `/api/materials`, `/api/classes`,
+  `/api/assignments`, `/api/attempts`, `/api/study`, `/api/analytics`. Authenticated,
+  persistent, school- and class-scoped.
+* **The original engine routes** — `/api/extract` and `/api/sessions*`. Unchanged in shape
+  and still open to anonymous visitors, so the demo path on the landing page keeps working
+  and nothing that already calls them breaks during the migration.
+
+Engine discipline is unchanged: the slow call is ingest, and no model runs in the answer
+loop, so answering is instant.
 """
 from __future__ import annotations
 
-import io
+import contextlib
+import logging
+import os
 import random
-import re
 import uuid
-import zipfile
 from dataclasses import dataclass, field
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from . import db, security, sources as ingest
+from .api import analytics, auth, classroom, content, study, chat
 from .generate import Question, generate_bank, ollama
 from .grade import grade
 from .ingest import Concept, build_dag, extract_concepts
 from .learner import Mastery, record, select_question
 
-app = FastAPI(title="Lattice", version="0.1.0")
+log = logging.getLogger("lattice")
 
-# The web client is served from its own dev origin; the API holds no credentials.
+@contextlib.asynccontextmanager
+async def lifespan(_: FastAPI):
+    db.init()
+    if security.is_dev_secret():
+        log.warning(
+            "LATTICE_SECRET is not set — signing sessions with the built-in development key. "
+            "Set it before deploying or every cookie this process issues is forgeable."
+        )
+    yield
+
+
+app = FastAPI(title="Lattice", version="0.2.0", lifespan=lifespan)
+
+
+# Credentials now travel on a cookie, so "*" is no longer an acceptable origin: a wildcard
+# with credentials lets any site drive the API as the signed-in user. The dev client origins
+# are allow-listed, and deployment adds its own through LATTICE_ORIGINS.
+_ORIGINS = [
+    o.strip()
+    for o in os.environ.get(
+        "LATTICE_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
+    ).split(",")
+    if o.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_ORIGINS,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+for module in (auth, content, classroom, study, analytics, chat):
+    app.include_router(module.router)
+
+
+@app.get("/api/health")
+def health() -> dict:
+    return {"ok": True, "sessions": len(SESSIONS), "persistent": True}
+
+
+# --------------------------------------------------------------------------- #
+#  Legacy engine surface                                                      #
+#                                                                             #
+#  Anonymous, in-process, ephemeral — which is exactly what the landing-page   #
+#  demo wants and what the 20 existing tests assert. Signed-in users go        #
+#  through /api/sources and /api/study instead, where the student model is     #
+#  persisted per person.                                                      #
+# --------------------------------------------------------------------------- #
 
 
 @dataclass
@@ -42,8 +95,6 @@ class Session:
     day: int = 0
 
 
-# ponytail: process memory, so sessions die with the worker. Supabase lands with the UI;
-# every read goes through _session() so there is one place to swap.
 SESSIONS: dict[str, Session] = {}
 
 
@@ -86,52 +137,14 @@ def _state(s: Session) -> dict:
     }
 
 
-@app.get("/api/health")
-def health() -> dict:
-    return {"ok": True, "sessions": len(SESSIONS)}
-
-
-MAX_UPLOAD_BYTES = 20 * 1024 * 1024
-_XML_TAG = re.compile(r"<[^>]+>")
-
-
-def _docx_text(raw: bytes) -> str:
-    """Pull the paragraph text out of a .docx without adding a dependency."""
-    with zipfile.ZipFile(io.BytesIO(raw)) as z:
-        xml = z.read("word/document.xml").decode("utf-8", "ignore")
-    xml = re.sub(r"</w:p>", "\n", xml)
-    return _XML_TAG.sub("", xml)
-
-
 @app.post("/api/extract")
 async def extract(file: UploadFile = File(...)) -> dict:
     """Uploaded file -> plain text, so the client can hand it straight to /api/sessions."""
     raw = await file.read()
-    if len(raw) > MAX_UPLOAD_BYTES:
-        raise HTTPException(status_code=413, detail="file is larger than 20 MB")
-
-    name = (file.filename or "material").lower()
     try:
-        if name.endswith(".pdf"):
-            from pypdf import PdfReader
-
-            reader = PdfReader(io.BytesIO(raw))
-            text = "\n".join((p.extract_text() or "") for p in reader.pages)
-        elif name.endswith(".docx"):
-            text = _docx_text(raw)
-        else:
-            text = raw.decode("utf-8", "ignore")
-    except HTTPException:
-        raise
-    except Exception:
-        raise HTTPException(status_code=422, detail="could not read that file")
-
-    text = re.sub(r"[ \t]+", " ", text).strip()
-    if len(text) < 200:
-        raise HTTPException(
-            status_code=422,
-            detail="not enough readable text in that file — a scanned PDF needs OCR first",
-        )
+        text = ingest.extract_file(raw, file.filename or "material")
+    except ingest.IngestError as e:
+        raise HTTPException(status_code=e.status, detail=str(e))
     return {"text": text, "chars": len(text), "filename": file.filename or "material"}
 
 

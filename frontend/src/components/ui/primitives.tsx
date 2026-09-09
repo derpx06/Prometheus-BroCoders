@@ -48,11 +48,18 @@ export function ProgressBar({
 }: {
   value: number
   className?: string
-  tone?: 'accent' | 'ink' | 'good'
+  tone?: 'accent' | 'ink' | 'good' | 'warn'
   height?: number
 }) {
   const pct = Math.max(0, Math.min(1, value)) * 100
-  const bg = tone === 'accent' ? 'bg-accent' : tone === 'good' ? 'bg-good' : 'bg-ink'
+  const bg =
+    tone === 'accent'
+      ? 'bg-accent'
+      : tone === 'good'
+        ? 'bg-good'
+        : tone === 'warn'
+          ? 'bg-warn'
+          : 'bg-ink'
   return (
     <div
       role="progressbar"

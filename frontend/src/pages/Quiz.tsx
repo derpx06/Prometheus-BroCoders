@@ -13,7 +13,7 @@ import {
 import { Button } from '../components/ui/Button'
 import { Badge, EmptyState, ProgressBar, Skeleton } from '../components/ui/primitives'
 import { useApp } from '../store/app'
-import { api } from '../lib/api'
+import { api, demo } from '../lib/api'
 import { FREE_THRESHOLD, shuffleOptions, similarity } from '../lib/quiz'
 import { pct, titleCase } from '../lib/format'
 import { cn } from '../lib/cn'
@@ -82,18 +82,22 @@ export function Quiz() {
     setText('')
     setGraded(null)
 
-    if (!pack.sessionId) {
+    if (!pack.sourceId && !pack.sessionId) {
       loadStatic(pack, index)
       return
     }
 
     try {
-      const res = await api.next(pack.sessionId)
+      // A server-backed pack uses the persistent loop, so mastery carries across sessions;
+      // an anonymous demo pack uses the ephemeral one.
+      const res = pack.sourceId
+        ? await api.studyNext(pack.sourceId)
+        : await demo.next(pack.sessionId!)
       if (res.done) {
         setFinished(true)
       } else {
         setQuestion({
-          questionId: res.question_id,
+          questionId: 'questionId' in res ? res.questionId : res.question_id,
           kind: res.kind,
           stem: res.stem,
           options: res.options,
@@ -158,8 +162,21 @@ export function Quiz() {
 
     try {
       let wasCorrect = false
-      if (pack.sessionId) {
-        const res = await api.answer(pack.sessionId, question.questionId, response)
+      if (pack.sourceId) {
+        const res = await api.studyAnswer(pack.sourceId, question.questionId, response)
+        wasCorrect = res.correct
+        setGraded({
+          correct: res.correct,
+          score: res.score,
+          ideal: res.idealAnswer,
+          // The server now writes the explanation, grounded in the concept's own evidence and
+          // its prerequisites, rather than the client assembling a sentence about it.
+          explanation: res.explanation,
+          masteryAfter: res.masteryAfter,
+        })
+        setConceptMastery(pack.id, question.concept, res.masteryAfter)
+      } else if (pack.sessionId) {
+        const res = await demo.answer(pack.sessionId, question.questionId, response)
         wasCorrect = res.correct
         setGraded({
           correct: res.correct,
@@ -198,14 +215,15 @@ export function Quiz() {
   }
 
   const advance = () => {
-    if (index + 1 >= TARGET || (!pack.sessionId && index + 1 >= pack.quiz.length)) {
+    const live = Boolean(pack.sourceId || pack.sessionId)
+    if (index + 1 >= TARGET || (!live && index + 1 >= pack.quiz.length)) {
       setFinished(true)
       return
     }
     setIndex((i) => i + 1)
   }
 
-  const total = pack.sessionId ? TARGET : Math.min(TARGET, pack.quiz.length)
+  const total = pack.sourceId || pack.sessionId ? TARGET : Math.min(TARGET, pack.quiz.length)
 
   if (finished) return <Results pack={pack} history={history} onRestart={() => location.reload()} />
 
@@ -244,7 +262,7 @@ export function Quiz() {
             >
               <div className="mb-4 flex flex-wrap items-center gap-2">
                 <Badge tone="neutral">{titleCase(question.concept)}</Badge>
-                {pack.sessionId && (
+                {(pack.sourceId || pack.sessionId) && (
                   <Badge tone="accent">
                     Chosen for you · difficulty {Math.round(question.difficulty * 100)}
                   </Badge>
