@@ -183,4 +183,4 @@ def mastery_by_source(user,source_ids: Iterable[str]):
 
 def chat_history(user,source_id,limit=100): return _docs(database().chat_messages.find({"user_id":user.id,"source_id":source_id}).sort("created_at",1).limit(limit))
 def save_chat_message(user,source_id,role,content,citations=None):
-    row={"id":_id(),"user_id":user.id,"source_id":source_id,"role":role,"content":content,"citations":citations or [],"created_at":now()}; database().chat_messages.insert_one(row); return row
+    row={"id":_id(),"user_id":user.id,"source_id":source_id,"role":role,"content":content,"citations":citations or [],"created_at":now()}; database().chat_messages.insert_one(row); return _doc(row)

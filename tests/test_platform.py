@@ -524,3 +524,17 @@ def test_legacy_engine_routes_still_work_anonymously(app_module):
     assert anon.post(
         f"/api/sessions/{session_id}/answer", json={"question_id": q["question_id"], "response": "x"}
     ).status_code == 200
+
+
+def test_source_chat_is_grounded_and_persisted(app_module, teacher_ctx, monkeypatch):
+    from backend import ai
+
+    admin, outsider = teacher_ctx
+    source_id = admin.get("/api/sources").json()["sources"][0]["id"]
+    monkeypatch.setattr(ai, "grounded_reply", lambda *_: ("A grounded answer.", [{"concept": "vector", "sentence": "A vector has magnitude and direction."}]))
+    reply = admin.post(f"/api/sources/{source_id}/chat", json={"message": "What is a vector?"})
+    assert reply.status_code == 200, reply.text
+    assert reply.json()["message"]["citations"][0]["concept"] == "vector"
+    history = admin.get(f"/api/sources/{source_id}/chat").json()["messages"]
+    assert [m["role"] for m in history] == ["user", "assistant"]
+    assert outsider.get(f"/api/sources/{source_id}/chat").status_code == 404
